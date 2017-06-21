@@ -1,0 +1,88 @@
+buildscript {
+    repositories {
+        jcenter()
+    }
+    dependencies {
+        classpath 'com.github.jengelman.gradle.plugins:shadow:2.0.1'
+    }
+}
+
+apply plugin: 'java'
+apply plugin: 'maven'
+apply plugin: 'maven-publish'
+
+apply plugin: 'eclipse'
+apply plugin: 'idea'
+
+apply plugin: 'com.github.johnrengelman.shadow'
+
+group = 'io.github.retz'
+version = '0.0.1'
+
+def digdagVersion = '0.9.13'
+
+project.ext {
+    retzMavenRepo = project.version.contains("-SNAPSHOT") ? "s3://retz-maven/snapshots" : "s3://retz-maven/releases"
+}
+
+repositories {
+    mavenCentral()
+    jcenter()
+    maven {
+        url 'https://dl.bintray.com/digdag/maven'
+    }
+    maven {
+        url 'http://retz-maven.s3.amazonaws.com/releases'
+    }
+}
+
+configurations {
+    provided
+}
+
+dependencies {
+    compile 'io.github.retz:retz-client:0.2.10'
+    compileOnly 'io.digdag:digdag-spi:' + digdagVersion
+    compileOnly 'io.digdag:digdag-plugin-utils:' + digdagVersion
+
+}
+
+shadowJar {
+    classifier = null
+    relocate 'com.fasterxml.jackson', 'shadow.jackson'
+}
+
+publishing {
+    publications {
+        shadow(MavenPublication) { publication ->
+            project.shadow.component(publication)
+            artifactId 'retz-digdag-plugin'
+        }
+    }
+    repositories {
+        maven {
+            url retzMavenRepo
+            credentials(AwsCredentials) {
+                accessKey System.getenv('AWS_ACCESS_KEY_ID')
+                secretKey System.getenv('AWS_SECRET_ACCESS_KEY')
+            }
+        }
+    }
+}
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+compileJava.options.encoding = 'UTF-8'
+compileTestJava.options.encoding = 'UTF-8'
+
+tasks.withType(JavaCompile) {
+    options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation"
+}
+
+javadoc {
+    options {
+        locale = 'en_US'
+        encoding = 'UTF-8'
+    }
+}
