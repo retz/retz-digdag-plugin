@@ -22,7 +22,8 @@ version = '0.0.2-SNAPSHOT'
 def digdagVersion = '0.9.13'
 
 project.ext {
-    retzMavenRepo = project.version.contains("-SNAPSHOT") ? "s3://retz-maven/snapshots" : "s3://retz-maven/releases"
+    retzMavenRepo = project.hasProperty("publishRepo") ? project.getProperty("publishRepo")
+            : project.version.contains("-SNAPSHOT") ? "s3://retz-maven/snapshots" : "s3://retz-maven/releases"
 }
 
 repositories {
@@ -62,9 +63,11 @@ publishing {
     repositories {
         maven {
             url retzMavenRepo
-            credentials(AwsCredentials) {
-                accessKey System.getenv('AWS_ACCESS_KEY_ID')
-                secretKey System.getenv('AWS_SECRET_ACCESS_KEY')
+            if (retzMavenRepo.startsWith("s3://")) {
+                credentials(AwsCredentials) {
+                    accessKey System.getenv('AWS_ACCESS_KEY_ID')
+                    secretKey System.getenv('AWS_SECRET_ACCESS_KEY')
+                }
             }
         }
     }
