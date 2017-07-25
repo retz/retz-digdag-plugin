@@ -6,6 +6,8 @@ import io.digdag.client.config.ConfigException;
 import io.digdag.spi.TaskRequest;
 import io.digdag.util.Workspace;
 import io.github.retz.cli.SubCommand;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.text.MessageFormat;
@@ -16,6 +18,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 class RetzOperatorConfig {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(RetzOperatorConfig.class);
 
     static final String KEY_CONFIG_ROOT = "retz";
 
@@ -43,6 +47,8 @@ class RetzOperatorConfig {
         this.retzConfig = taskRequest.getConfig().mergeDefault(
                 taskRequest.getConfig().getNestedOrGetEmpty(KEY_CONFIG_ROOT));
 
+        // TODO interim fix for error log: "Parameter 'xx' is not used at task ..."
+        dumpConfig();
     }
 
     Config getRetzConfig() {
@@ -296,6 +302,27 @@ class RetzOperatorConfig {
                         "retz: Invalid size (unsupported size unit): {0}",
                         value));
         }
+    }
+
+    private void dumpConfig() {
+        LOGGER.debug(
+                "client_mode:{}, client_config:{}, appname:{}, env:{}, cpu:{}, mem:{}, disk:{}, gpu:{}, ports:{}, priority:{}, name:{}, tags:{}, timeout:{}, verbose:{}, stderr:{}",
+                retzConfig.getOptional("client_mode", String.class),
+                retzConfig.getOptional("client_config", String.class),
+                retzConfig.getOptional("appname", String.class),
+                retzConfig.getListOrEmpty("env", String.class),
+                retzConfig.getOptional("cpu", Integer.class),
+                retzConfig.getOptional("mem", String.class),
+                retzConfig.getOptional("disk", String.class),
+                retzConfig.getOptional("gpu", Integer.class),
+                retzConfig.getOptional("ports", Integer.class),
+                retzConfig.getOptional("priority", Integer.class),
+                retzConfig.getOptional("name", String.class),
+                retzConfig.getListOrEmpty("tags", String.class),
+                retzConfig.getOptional("timeout", Integer.class),
+                retzConfig.getOptional("verbose", Boolean.class),
+                retzConfig.getOptional("stderr", Boolean.class)
+        );
     }
 
 }

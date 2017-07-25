@@ -1,6 +1,9 @@
 package io.github.retz.digdag.plugin;
 
+import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
+import io.digdag.client.config.Config;
+import io.digdag.client.config.ConfigElement;
 import io.digdag.spi.CommandLogger;
 import io.digdag.spi.OperatorContext;
 import io.digdag.spi.TaskExecutionException;
@@ -8,12 +11,13 @@ import io.digdag.spi.TaskResult;
 import io.digdag.util.BaseOperator;
 import io.github.retz.cli.ClientCLIConfig;
 import io.github.retz.cli.TimestampHelper;
+import io.github.retz.protocol.GetFileResponse;
+import io.github.retz.protocol.GetJobResponse;
 import io.github.retz.protocol.Response;
 import io.github.retz.protocol.ScheduleResponse;
 import io.github.retz.protocol.data.Job;
 import io.github.retz.protocol.exception.JobNotFoundException;
 import io.github.retz.web.Client;
-import io.github.retz.web.ClientHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,11 +25,14 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URISyntaxException;
+import java.text.SimpleDateFormat;
 import java.text.ParseException;
-import java.util.*;
-import java.util.concurrent.Callable;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+import java.util.Properties;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class RetzRunApiOperator extends BaseOperator {
 
@@ -40,9 +47,239 @@ public class RetzRunApiOperator extends BaseOperator {
         this.clog = clog;
     }
 
+    private static final String STATE_JOB_ID = "jobId";
+    private static final String STATE_JOB_STATE = "jobState";
+    private static final String STATE_POLL_ITERATION = "pollIteration";
+    private static final String STATE_OFFSET = "offset";
+    private static final String STATE_RESULT_CODE = "result";
+    private static final String STATE_REASON = "reason";
+
+    private static final int MAX_INTERVAL_SEC = 20;
+    private static final int MAX_ITERATION = 6;
+    private static final int MAX_FETCH_FILE_LENGTH = 65536;
+
     @Override
     public TaskResult runTask() {
 
+        Config state = request.getLastStateParams().deepCopy();
+        TaskResult taskResult;
+
+        Optional<Integer> maybeEcode = state.getOptional(STATE_RESULT_CODE, Integer.class);
+        if (!maybeEcode.isPresent()) {
+            try (Client webClient = createClient()) {
+                Optional<Integer> maybeJobId = state.getOptional(STATE_JOB_ID, Integer.class);
+                Job job;
+                if (!maybeJobId.isPresent()) {
+                    job = processSchedule(webClient, state);
+                } else {
+                    job = getJob(maybeJobId.get(), webClient);
+                }
+                state.set(STATE_JOB_STATE, job.state().toString());
+                LOGGER.debug("job: {}", job);
+
+                TaskExecutionException nextPolling = processGetFile(job, webClient, state);
+                LOGGER.debug("next polling: {}", state);
+
+                throw nextPolling;
+            }
+        } else {
+            taskResult = processFinish(maybeEcode.get(), state);
+        }
+        return taskResult;
+    }
+
+    private TaskResult processFinish(int result, Config state) {
+        if (result != 0) {
+            //TODO state params do not show when task failure
+            throw new TaskExecutionException(String.format(
+                    "retz_run: Job(id=%s) failed. " +
+                            "| retz-info: state=%s, reason=%s " +
+                            "| log: `digdag log %s %s`",
+                    state.get(STATE_JOB_ID, String.class),
+                    state.get(STATE_JOB_STATE, String.class), state.get(STATE_REASON, String.class),
+                    request.getAttemptId(), request.getTaskName()));
+        }
+
+        TaskResult taskResult = TaskResult.empty(request);
+        taskResult.getStoreParams()
+                .getNestedOrSetEmpty(RetzOperatorConfig.KEY_CONFIG_ROOT)
+                .set("last_job_id", state.get(STATE_JOB_ID, String.class));
+
+        return taskResult;
+    }
+
+    private Job processSchedule(Client webClient, Config state) {
+        Job job = createJob();
+        Response res;
+        try {
+            res = webClient.schedule(job);
+        } catch (IOException ex) {
+            throw new RuntimeException("Failed to schedule Retz job", ex);
+        }
+        if (!(res instanceof ScheduleResponse)) {
+            throw new TaskExecutionException(String.format(
+                    "Failed to schedule Retz job: %s",
+                    res.status()));
+        }
+
+        Job scheduled = ((ScheduleResponse) res).job();
+        LOGGER.info("Job(id={}) scheduled: {}", scheduled.id(), scheduled.state());
+
+        initializeTaskState(scheduled, state);
+
+        return scheduled;
+    }
+
+    private void initializeTaskState(Job job, Config state) {
+        state.set(STATE_JOB_ID, job.id());
+        state.set(STATE_POLL_ITERATION, 0);
+        state.set(STATE_OFFSET, 0L);
+    }
+
+
+    private TaskExecutionException processGetFile(Job job, Client webClient, Config state) {
+
+        switch(job.state()) {
+            case QUEUED:
+                checkTimeout(job, webClient);
+                return nextPolling(state);
+            case STARTING:
+            case STARTED:
+                checkTimeout(job, webClient);
+                getWholeFileByState(job, webClient, "stdout", state);
+                return nextPolling(state);
+            case FINISHED:
+            case KILLED:
+                getWholeFileByState(job, webClient, "stdout", state);
+                if (config.getVerbose()) {
+                    LOGGER.info("Job(id={}) finished to get stdout, will get stderr", job.id());
+                }
+                getWholeFile(job, webClient, "stderr", 0);
+                return finishJob(job, state);
+            default:
+                throw new IllegalStateException("unexpected status: " + job.state());
+        }
+    }
+
+    private void checkTimeout(Job job, Client webClient) {
+        int timeout = config.getTimeout();
+        if (timeout > 0) {
+            Date scheduled;
+            try {
+                scheduled = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX").parse(job.scheduled());
+            } catch (ParseException ex) {
+                throw Throwables.propagate(ex);
+            }
+            Calendar limit = Calendar.getInstance();
+            limit.setTime(scheduled);
+            limit.add(Calendar.MINUTE, timeout);
+
+            if (limit.compareTo(Calendar.getInstance()) < 0) {
+                try {
+                    webClient.kill(job.id());
+                    throw new TaskExecutionException(String.format(
+                            "Job(id=%s) has been killed due to timeout after %d minute(s)",
+                            job.id(), timeout));
+                } catch (IOException ex) {
+                    throw new RuntimeException(String.format(
+                            "Job(id=%s) failed to kill timedout job", job.id()), ex);
+                }
+            }
+        }
+    }
+
+    private TaskExecutionException nextPolling(Config state) {
+        int iteration = state.get(STATE_POLL_ITERATION, Integer.class);
+        int interval = exponentialBackoffInterval(iteration);
+        state.set(STATE_POLL_ITERATION, ++iteration);
+
+        return TaskExecutionException.ofNextPolling(interval, ConfigElement.copyOf(state));
+    }
+
+    private void getWholeFileByState(Job job, Client webClient, String filename, Config state) {
+            long offset = state.get(STATE_OFFSET, Long.class);
+            long bytesRead = getWholeFile(job, webClient, filename, offset);
+
+            state.set(STATE_OFFSET, offset + bytesRead);
+            if (bytesRead != 0) {
+                state.set(STATE_POLL_ITERATION, 0);
+            }
+    }
+
+    private long getWholeFile(Job job, Client webClient, String filename, long offset) {
+        try {
+            return readFileUntilEmpty(webClient, job.id(), filename, offset, new CommandLoggerBridge(clog, System.out));
+        } catch (IOException ex) {
+            throw new RuntimeException(String.format(
+                    "Job(id=%s) failed with unexpected error", job.id()), ex);
+
+        }
+    }
+
+    private static long readFileUntilEmpty(Client c, int id, String filename, long offset, OutputStream out) throws IOException {
+        long current = offset;
+
+        while (true) {
+            Response res = c.getFile(id, filename, current, MAX_FETCH_FILE_LENGTH);
+            if (res instanceof GetFileResponse) {
+                GetFileResponse getFileResponse = (GetFileResponse) res;
+
+                // Check data
+                if (getFileResponse.file().isPresent()) {
+                    if (getFileResponse.file().get().data().isEmpty()) {
+                        // All contents fetched
+                        return current - offset;
+
+                    } else {
+                        byte[] data = getFileResponse.file().get().data().getBytes(UTF_8);
+                        LOGGER.debug("Fetched data length={}, current={}", data.length, current);
+                        out.write(data);
+                        current = current + data.length;
+                    }
+                } else {
+                    //LOG.info("{}: ,{}", filename, current);
+                    return current - offset;
+                }
+            } else {
+                LOGGER.error(res.status());
+                throw new IOException(res.status());
+            }
+        }
+    }
+
+    private TaskExecutionException finishJob(Job job, Config state) {
+        LOGGER.info("Job(id={}) finished in {} seconds. status: {}",
+                job.id(),
+                getElapsed(job.started(), job.finished()),
+                job.state());
+
+        state.set(STATE_RESULT_CODE, job.result());
+        state.remove(STATE_POLL_ITERATION);
+        state.remove(STATE_OFFSET);
+
+        if (job.result() != 0) {
+            state.set(STATE_REASON, job.reason());
+        }
+
+        return TaskExecutionException.ofNextPolling(0, ConfigElement.copyOf(state));
+    }
+
+    private String getElapsed(String started, String finished) {
+        String elapsed;
+        try {
+            if (started == null || finished == null) {
+                elapsed = "-";
+            } else {
+                elapsed = String.valueOf(TimestampHelper.diffMillisec(finished, started) / 1000.0);
+            }
+        } catch(ParseException ex) {
+            throw Throwables.propagate(ex);
+        }
+        return elapsed;
+    }
+
+
+    private Client createClient() {
         ClientCLIConfig fileConfig;
         try {
             fileConfig = new ClientCLIConfig(config.getClientConfig(workspace));
@@ -50,6 +287,14 @@ public class RetzRunApiOperator extends BaseOperator {
             throw Throwables.propagate(ex);
         }
 
+        return Client.newBuilder(fileConfig.getUri())
+                .setAuthenticator(fileConfig.getAuthenticator())
+                .checkCert(!fileConfig.insecure())
+                .setVerboseLog(config.getVerbose())
+                .build();
+    }
+
+    private Job createJob() {
         String appName = config.getAppName();
         String remoteCmd = config.getRemoteCommand();
         Properties envProps = config.getEnvProps();
@@ -62,7 +307,6 @@ public class RetzRunApiOperator extends BaseOperator {
         int priority = config.getPriority();
         String name = config.getJobName();
         List<String> tags = config.getTags();
-        int timeout = config.getTimeout();
 
         boolean verbose = config.getVerbose();
 
@@ -75,104 +319,33 @@ public class RetzRunApiOperator extends BaseOperator {
             LOGGER.info("Job created: {}", job);
         }
 
-        Job scheduled;
-        Job finished;
-        int ecode;
-        try (Client webClient = Client.newBuilder(fileConfig.getUri())
-                .setAuthenticator(fileConfig.getAuthenticator())
-                .checkCert(!fileConfig.insecure())
-                .setVerboseLog(verbose)
-                .build()) {
+        return job;
+    }
 
-            Response res;
-            try {
-                res = webClient.schedule(job);
-            } catch (IOException ex) {
-                throw new RuntimeException("Failed to schedule Retz job", ex);
-            }
-            if (!(res instanceof ScheduleResponse)) {
-                throw new RuntimeException(String.format(
-                        "Failed to schedule Retz job: %s",
-                        res.status()));
-            }
+    private Job getJob(int id, Client webClient) {
+        Response res;
+        try {
+            res = webClient.getJob(id);
+        } catch (IOException ex) {
+            throw Throwables.propagate(ex);
+        }
 
-            long start = System.currentTimeMillis();
-            Callable<Boolean> timedout;
-            if (timeout > 0) {
-                timedout = () -> {
-                    long now = System.currentTimeMillis();
-                    long elapsed = now - start;
-                    return elapsed > TimeUnit.MINUTES.toMillis(timeout);
-                };
+        if (res instanceof GetJobResponse) {
+            GetJobResponse getJobResponse = (GetJobResponse) res;
+            if (getJobResponse.job().isPresent()) {
+                return getJobResponse.job().get();
             } else {
-                timedout = () -> false;
+                throw Throwables.propagate(new JobNotFoundException(id));
             }
-
-            scheduled = ((ScheduleResponse) res).job();
-            LOGGER.info("Job(id={}) scheduled: {}", scheduled.id(), scheduled.state());
-
-            try {
-                Job running = ClientHelper.waitForStart(scheduled, webClient, timedout);
-                if (verbose) {
-                    LOGGER.info("Job(id={}) started: {}, Timeout = {} minutes", running.id(), running.state(), timeout);
-                }
-
-                Optional<Job> maybeFinished = ClientHelper.getWholeFileWithTerminator(
-                        webClient, running.id(), "stdout", true, new CommandLoggerBridge(clog, System.out), timedout);
-
-                if (verbose) {
-                    LOGGER.info("Job(id={}) finished to get stdout, will get stderr", running.id());
-                }
-
-                ClientHelper.getWholeFileWithTerminator(
-                        webClient, running.id(), "stderr", false, new CommandLoggerBridge(clog, System.err), null);
-
-                if (maybeFinished.isPresent()) {
-                    finished = maybeFinished.get();
-                    LOGGER.debug("{}", finished);
-                    LOGGER.info("Job(id={}) finished in {} seconds. status: {}",
-                            running.id(),
-                            TimestampHelper.diffMillisec(
-                                    finished.finished(), finished.started()) / 1000.0,
-                            finished.state());
-                    ecode = finished.result();
-                } else {
-                    throw new RuntimeException(String.format(
-                            "Job(id=%s) failed to fetch last state of job",
-                            running.id()));
-                }
-            } catch (TimeoutException ex) {
-                try {
-                    webClient.kill(scheduled.id());
-                    throw new TaskExecutionException(String.format(
-                            "Job(id=%s) has been killed due to timeout after %d minute(s)",
-                            scheduled.id(), timeout));
-                } catch (IOException e) {
-                    throw new RuntimeException(String.format(
-                            "Job(id=%s) failed to kill timedout job", scheduled.id()), ex);
-                }
-            } catch (IOException | ParseException | JobNotFoundException ex) {
-                throw new RuntimeException(String.format(
-                        "Job(id=%s) failed with unexpected error", scheduled.id()), ex);
-            }
-        }
-
-        if (ecode != 0) {
+        } else {
             throw new TaskExecutionException(String.format(
-                    "retz_run: Job(id=%s) failed. " +
-                            "| retz-info: taskId=%s, state=%s, reason=%s " +
-                            "| log: `digdag log %s %s`",
-                    finished.id(), finished.taskId(),
-                    finished.state(), finished.reason(),
-                    request.getAttemptId(), request.getTaskName()));
+                    "Job(id=%s) getJob received invalid response: %s",
+                    id, res.status()));
         }
+    }
 
-        TaskResult taskResult = TaskResult.empty(request);
-        taskResult.getStoreParams()
-                .getNestedOrSetEmpty(RetzOperatorConfig.KEY_CONFIG_ROOT)
-                .set("last_job_id", scheduled.id());
-
-        return taskResult;
+    private static int exponentialBackoffInterval(int iteration) {
+        return Math.min((int)Math.pow(2, Math.min(iteration, MAX_ITERATION)), MAX_INTERVAL_SEC);
     }
 
     static class CommandLoggerBridge extends OutputStream {
