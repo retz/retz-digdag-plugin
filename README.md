@@ -11,7 +11,7 @@ _export:
     repositories:
       - http://retz-maven.s3.amazonaws.com/releases
     dependencies:
-      - io.github.retz:retz-digdag-plugin:0.0.1
+      - io.github.retz:retz-digdag-plugin:0.0.2
   retz:
     appname: default
     cpu: 1
@@ -50,7 +50,7 @@ _export:
     repositories:
       - http://retz-maven.s3.amazonaws.com/releases
     dependencies:
-      - io.github.retz:retz-digdag-plugin:0.0.1
+      - io.github.retz:retz-digdag-plugin:0.0.2
 ```
 
 ## Provided operator plugins
