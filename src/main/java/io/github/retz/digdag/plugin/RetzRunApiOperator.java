@@ -54,8 +54,6 @@ public class RetzRunApiOperator extends BaseOperator {
     private static final String STATE_RESULT_CODE = "result";
     private static final String STATE_REASON = "reason";
 
-    private static final int MAX_INTERVAL_SEC = 20;
-    private static final int MAX_ITERATION = 6;
     private static final int MAX_FETCH_FILE_LENGTH = 65536;
 
     @Override
@@ -344,8 +342,8 @@ public class RetzRunApiOperator extends BaseOperator {
         }
     }
 
-    private static int exponentialBackoffInterval(int iteration) {
-        return Math.min((int)Math.pow(2, Math.min(iteration, MAX_ITERATION)), MAX_INTERVAL_SEC);
+    private int exponentialBackoffInterval(int iteration) {
+        return Math.min(Math.max(config.getMinPollInterval(), (int)Math.pow(2, iteration)), config.getMaxPollInterval());
     }
 
     static class CommandLoggerBridge extends OutputStream {

@@ -1,5 +1,6 @@
 package io.github.retz.digdag.plugin;
 
+import io.digdag.client.config.Config;
 import io.digdag.spi.*;
 
 import java.util.Arrays;
@@ -23,11 +24,13 @@ public class RetzPlugin implements Plugin {
         CommandExecutor exec;
         @Inject
         CommandLogger cLog;
+        @Inject
+        Config systemConfig;
 
         @Override
         public List<OperatorFactory> get() {
             return Arrays.asList(
-                    new RetzRunOperatorFactory(exec, cLog)
+                    new RetzRunOperatorFactory(exec, cLog, systemConfig)
             );
         }
     }

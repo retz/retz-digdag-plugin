@@ -23,6 +23,11 @@ class RetzOperatorConfig {
 
     static final String KEY_CONFIG_ROOT = "retz";
 
+    private static final String KEY_SYSCONF_MIN_POLL_INTERVAL = KEY_CONFIG_ROOT + ".min-poll-interval";
+    private static final String KEY_SYSCONF_MAX_POLL_INTERVAL = KEY_CONFIG_ROOT + ".max-poll-interval";
+    private static final int DEFAULT_MIN_POLL_INTERVAL = 1;
+    private static final int DEFAULT_MAX_POLL_INTERVAL = 20;
+
     private static final String DEFAULT_CLIENT_CONFIG = "/opt/retz-client/etc/retz.properties";
     private static final String DEFAULT_CLIENT_CMD = "/opt/retz-client/bin/retz-client";
     private static final int DEFAULT_CPU = 1;
@@ -41,11 +46,13 @@ class RetzOperatorConfig {
 
     private final TaskRequest taskRequest;
     private final Config retzConfig;
+    private final Config systemConfig;
 
-    RetzOperatorConfig(TaskRequest taskRequest) {
+    RetzOperatorConfig(TaskRequest taskRequest, Config systemConfig) {
         this.taskRequest = taskRequest;
         this.retzConfig = taskRequest.getConfig().mergeDefault(
                 taskRequest.getConfig().getNestedOrGetEmpty(KEY_CONFIG_ROOT));
+        this.systemConfig = systemConfig;
 
         // TODO interim fix for error log: "Parameter 'xx' is not used at task ..."
         dumpConfig();
@@ -129,6 +136,14 @@ class RetzOperatorConfig {
 
     boolean getVerbose() {
         return retzConfig.get("verbose", Boolean.class, false);
+    }
+
+    int getMinPollInterval() {
+        return systemConfig.get(KEY_SYSCONF_MIN_POLL_INTERVAL, Integer.class, DEFAULT_MIN_POLL_INTERVAL);
+    }
+
+    int getMaxPollInterval() {
+        return systemConfig.get(KEY_SYSCONF_MAX_POLL_INTERVAL, Integer.class, DEFAULT_MAX_POLL_INTERVAL);
     }
 
     private boolean getStdErr() {
