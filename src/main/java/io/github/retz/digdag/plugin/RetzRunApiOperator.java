@@ -4,6 +4,7 @@ import com.google.common.base.Optional;
 import com.google.common.base.Throwables;
 import io.digdag.client.config.Config;
 import io.digdag.client.config.ConfigElement;
+import io.digdag.client.config.ConfigException;
 import io.digdag.spi.CommandLogger;
 import io.digdag.spi.OperatorContext;
 import io.digdag.spi.TaskExecutionException;
@@ -24,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.URI;
 import java.net.URISyntaxException;
 import java.text.SimpleDateFormat;
 import java.text.ParseException;
@@ -278,18 +280,50 @@ public class RetzRunApiOperator extends BaseOperator {
 
 
     private Client createClient() {
-        ClientCLIConfig fileConfig;
-        try {
-            fileConfig = new ClientCLIConfig(config.getClientConfig(workspace));
-        } catch (IOException | URISyntaxException ex) {
-            throw Throwables.propagate(ex);
-        }
+        Optional<String> maybeServerUri = config.getServerUri();
+        if (maybeServerUri.isPresent()) {
+            URI serverUri;
+            try {
+                serverUri = new URI(maybeServerUri.get());
+            } catch (URISyntaxException ex) {
+                throw new ConfigException(String.format(
+                        "Invalid '%s': %s", RetzOperatorConfig.KEY_SYSCONF_SERVER_URI, maybeServerUri.get()), ex);
+            }
+            Properties p = new Properties();
+            if (config.getAuthenticationEnabled().isPresent()) {
+                p.setProperty(RetzOperatorConfig.KEY_SYSCONF_AUTH_ENABLED, config.getAuthenticationEnabled().get());
+            }
+            if (config.getAccessKey().isPresent()) {
+                p.setProperty(RetzOperatorConfig.KEY_SYSCONF_ACCESS_KEY, config.getAccessKey().get());
+            }
+            if (config.getAccessSecret().isPresent()) {
+                p.setProperty(RetzOperatorConfig.KEY_SYSCONF_ACCESS_SECRET, config.getAccessSecret().get());
+            }
+            RetzOperatorConfig.ClientConfig clientConfig = new RetzOperatorConfig.ClientConfig(p);
 
-        return Client.newBuilder(fileConfig.getUri())
-                .setAuthenticator(fileConfig.getAuthenticator())
-                .checkCert(!fileConfig.insecure())
-                .setVerboseLog(config.getVerbose())
-                .build();
+            return Client.newBuilder(serverUri)
+                    .setAuthenticator(clientConfig.getAuthenticator())
+                    .checkCert(!clientConfig.insecure())
+                    .setVerboseLog(config.getVerbose())
+                    .build();
+        } else if (config.getClientConfig(workspace).isPresent()) {
+            ClientCLIConfig fileConfig;
+            try {
+                fileConfig = new ClientCLIConfig(config.getClientConfig(workspace).get());
+            } catch (IOException | URISyntaxException ex) {
+                throw Throwables.propagate(ex);
+            }
+
+            return Client.newBuilder(fileConfig.getUri())
+                    .setAuthenticator(fileConfig.getAuthenticator())
+                    .checkCert(!fileConfig.insecure())
+                    .setVerboseLog(config.getVerbose())
+                    .build();
+        } else {
+            throw new ConfigException(String.format(
+                    "fail to initialize Retz client: set '%s' to digdag configuration property",
+                    RetzOperatorConfig.KEY_SYSCONF_SERVER_URI));
+        }
     }
 
     private Job createJob() {

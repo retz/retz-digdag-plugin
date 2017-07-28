@@ -1,10 +1,12 @@
 package io.github.retz.digdag.plugin;
 
+import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import io.digdag.client.config.Config;
 import io.digdag.client.config.ConfigException;
 import io.digdag.spi.TaskRequest;
 import io.digdag.util.Workspace;
+import io.github.retz.cli.FileConfiguration;
 import io.github.retz.cli.SubCommand;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,12 +25,16 @@ class RetzOperatorConfig {
 
     static final String KEY_CONFIG_ROOT = "retz";
 
+    static final String KEY_SYSCONF_SERVER_URI = KEY_CONFIG_ROOT + ".server.uri";
+    static final String KEY_SYSCONF_AUTH_ENABLED = KEY_CONFIG_ROOT + ".authentication";
+    static final String KEY_SYSCONF_ACCESS_KEY = KEY_CONFIG_ROOT + ".access.key";
+    static final String KEY_SYSCONF_ACCESS_SECRET = KEY_CONFIG_ROOT + ".access.secret";
+
     private static final String KEY_SYSCONF_MIN_POLL_INTERVAL = KEY_CONFIG_ROOT + ".min-poll-interval";
     private static final String KEY_SYSCONF_MAX_POLL_INTERVAL = KEY_CONFIG_ROOT + ".max-poll-interval";
     private static final int DEFAULT_MIN_POLL_INTERVAL = 1;
     private static final int DEFAULT_MAX_POLL_INTERVAL = 20;
 
-    private static final String DEFAULT_CLIENT_CONFIG = "/opt/retz-client/etc/retz.properties";
     private static final String DEFAULT_CLIENT_CMD = "/opt/retz-client/bin/retz-client";
     private static final int DEFAULT_CPU = 1;
     private static final String DEFAULT_MEM = "32MB";
@@ -66,10 +72,14 @@ class RetzOperatorConfig {
         return retzConfig.get("client_mode", String.class, "api");
     }
 
-    String getClientConfig(Workspace workspace) {
-        String config =  retzConfig.get("client_config", String.class, DEFAULT_CLIENT_CONFIG);
-        if (!new File(config).isAbsolute()) {
-            config = workspace.getPath(config).toString();
+    Optional<String> getClientConfig(Workspace workspace) {
+        Optional<String> config = retzConfig.getOptional("client_config", String.class);
+        if (config.isPresent()) {
+            LOGGER.warn("'client_config' is deprecated. use '{}' on digdag configuration property instead.",
+                    KEY_SYSCONF_SERVER_URI);
+            if (!new File(config.get()).isAbsolute()) {
+                config = Optional.of(workspace.getPath(config.get()).toString());
+            }
         }
         return config;
     }
@@ -138,6 +148,22 @@ class RetzOperatorConfig {
         return retzConfig.get("verbose", Boolean.class, false);
     }
 
+    Optional<String> getServerUri() {
+        return systemConfig.getOptional(KEY_SYSCONF_SERVER_URI, String.class);
+    }
+
+    Optional<String> getAuthenticationEnabled() {
+        return systemConfig.getOptional(KEY_SYSCONF_AUTH_ENABLED, String.class);
+    }
+
+    Optional<String> getAccessKey() {
+        return systemConfig.getOptional(KEY_SYSCONF_ACCESS_KEY, String.class);
+    }
+
+    Optional<String> getAccessSecret() {
+        return systemConfig.getOptional(KEY_SYSCONF_ACCESS_SECRET, String.class);
+    }
+
     int getMinPollInterval() {
         return systemConfig.get(KEY_SYSCONF_MIN_POLL_INTERVAL, Integer.class, DEFAULT_MIN_POLL_INTERVAL);
     }
@@ -156,8 +182,8 @@ class RetzOperatorConfig {
     }
 
     void addClientConfig(ImmutableList.Builder<String> command, Workspace workspace) {
-        if (retzConfig.has("client_config")) {
-            command.add("-C").add(getClientConfig(workspace));
+        if (getClientConfig(workspace).isPresent()) {
+            command.add("-C").add(getClientConfig(workspace).get());
         }
     }
 
@@ -338,6 +364,13 @@ class RetzOperatorConfig {
                 retzConfig.getOptional("verbose", Boolean.class),
                 retzConfig.getOptional("stderr", Boolean.class)
         );
+    }
+
+    static class ClientConfig extends FileConfiguration {
+
+        ClientConfig(Properties p) {
+            super(p);
+        }
     }
 
 }

@@ -42,7 +42,31 @@ _export:
 
 ## Usage
 
-To use the plugin, include in your digadg workflow file:
+### Digdag configuration property
+
+To use the plugin, define the following Retz client settings to digdag config file (e.g. `digdag.properties`):
+
+- `retz.server.uri`
+  - Defines Retz server location to send all requests.
+- `retz.authentication`
+  - Set `true` to enable authentication.
+- `retz.access.key`
+  - Defines user identity to send requests to servers with.
+- `retz.access.secret`
+  - Defines access secret to identify and authenticate a user.
+
+```properties
+retz.server.uri = http://10.0.0.1:9090
+retz.authentication = true
+retz.access.key = deadbeef
+retz.access.secret = cafebabe
+```
+
+Please refer to [Retz Client documents](https://github.com/retz/retz/blob/master/doc/api.rst#client-configuration-file) for details.
+
+### Workflow settings
+
+Include the following plugin settings in your digadg workflow file (`*.dig`):
 
 ```yaml
 _export:
@@ -57,7 +81,7 @@ _export:
 
 ### retz_run>: Submitting a Retz job
 
-Submit a job by using Retz Client WebAPI. This operator schedules a job to Retz server and waits for it finish either successfully or not. Please refer to [Retz Client  documents](https://github.com/retz/retz/blob/master/doc/api.rst#client-cli-and-api) for details.
+Submit a job by using Retz Client WebAPI. This operator schedules a job to Retz server and waits for it finish either successfully or not. Please refer to [Retz Client documents](https://github.com/retz/retz/blob/master/doc/api.rst#client-cli-and-api) for details.
 
 ```yaml
 +run:
@@ -107,9 +131,9 @@ Submit a job by using Retz Client WebAPI. This operator schedules a job to Retz 
 - `verbose`: BOOLEAN
     - Set `true` to display detailed processing information
     - default: `false`
-- `client_config`: STRING
+- `client_config`: STRING **(deprecated)**
     - Configuration file path for Retz Client.
-    - default: `/opt/retz-client/etc/retz.properties`
+    - This option is deperecated and will be removed in a future version.
 
 ### Output parameters
 
