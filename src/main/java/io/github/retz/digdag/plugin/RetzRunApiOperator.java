@@ -90,7 +90,6 @@ public class RetzRunApiOperator extends BaseOperator {
 
     private TaskResult processFinish(int result, Config state) {
         if (result != 0) {
-            //TODO state params do not show when task failure
             throw new TaskExecutionException(String.format(
                     "retz_run: Job(id=%s) failed. " +
                             "| retz-info: state=%s, reason=%s " +
