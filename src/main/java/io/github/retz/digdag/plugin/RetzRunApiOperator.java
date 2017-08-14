@@ -10,6 +10,7 @@ import io.digdag.spi.OperatorContext;
 import io.digdag.spi.TaskExecutionException;
 import io.digdag.spi.TaskResult;
 import io.digdag.util.BaseOperator;
+import io.digdag.util.Durations;
 import io.github.retz.cli.ClientCLIConfig;
 import io.github.retz.cli.TimestampHelper;
 import io.github.retz.protocol.GetFileResponse;
@@ -29,6 +30,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.text.SimpleDateFormat;
 import java.text.ParseException;
+import java.time.Duration;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
@@ -54,6 +56,7 @@ public class RetzRunApiOperator extends BaseOperator {
     private static final String STATE_POLL_ITERATION = "pollIteration";
     private static final String STATE_OFFSET = "offset";
     private static final String STATE_RESULT_CODE = "result";
+    private static final String STATE_DURATION = "duration";
     private static final String STATE_REASON = "reason";
 
     private static final int MAX_FETCH_FILE_LENGTH = 65536;
@@ -247,12 +250,13 @@ public class RetzRunApiOperator extends BaseOperator {
     }
 
     private TaskExecutionException finishJob(Job job, Config state) {
-        LOGGER.info("Job(id={}) finished in {} seconds. status: {}",
-                job.id(),
-                getElapsed(job.started(), job.finished()),
-                job.state());
+        String duration = getDuration(job.started(), job.finished());
+
+        LOGGER.info("Job(id={}) finished in {}. status: {}",
+                job.id(), duration, job.state());
 
         state.set(STATE_RESULT_CODE, job.result());
+        state.set(STATE_DURATION, duration);
         state.remove(STATE_POLL_ITERATION);
         state.remove(STATE_OFFSET);
 
@@ -263,18 +267,25 @@ public class RetzRunApiOperator extends BaseOperator {
         return TaskExecutionException.ofNextPolling(0, ConfigElement.copyOf(state));
     }
 
-    private String getElapsed(String started, String finished) {
-        String elapsed;
+    private String getDuration(String started, String finished) {
+        long duration;
         try {
             if (started == null || finished == null) {
-                elapsed = "-";
+                duration = -1L;
             } else {
-                elapsed = String.valueOf(TimestampHelper.diffMillisec(finished, started) / 1000.0);
+                duration = TimestampHelper.diffMillisec(finished, started);
             }
         } catch(ParseException ex) {
             throw Throwables.propagate(ex);
         }
-        return elapsed;
+
+        if (duration < 0) {
+            return "-";
+        } else if (duration < 1000) {
+            return String.format("%ss", duration / 1000.0);
+        } else {
+            return Durations.formatDuration(Duration.ofMillis(duration));
+        }
     }
 
 
