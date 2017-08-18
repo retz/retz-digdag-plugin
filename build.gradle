@@ -19,7 +19,7 @@ apply plugin: 'com.github.johnrengelman.shadow'
 group = 'io.github.retz'
 version = '0.1.0-SNAPSHOT'
 
-def digdagVersion = '0.9.13'
+def digdagVersion = '0.9.15'
 
 project.ext {
     retzMavenRepo = project.hasProperty("publishRepo") ? project.getProperty("publishRepo")
