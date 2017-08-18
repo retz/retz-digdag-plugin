@@ -1,5 +1,12 @@
 # Retz Digdag Plugin release notes
 
+## 0.1.0 (2017-08-18)
+
+* Bump the following version:
+  * Digdag : 0.9.15
+  * Retz Client : 0.3.1
+  * Gradle : 4.1
+
 ## 0.0.4 (2017-08-18)
 
 * Add duration of Retz task to state params ([0458000](https://github.com/retz/retz-digdag-plugin/commit/0458000e88a0ac6e2c63158a8c9ef5194b6c47de))
