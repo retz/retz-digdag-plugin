@@ -36,9 +36,16 @@ _export:
 ```
 
 ## Requirement
+### Digdag
+- [Digdag](https://github.com/treasure-data/digdag) Version: 0.9.13+
 
-- [Retz](https://github.com/retz/retz) 0.2.9+
-- [Digdag](https://github.com/treasure-data/digdag) 0.9.13+
+### Retz
+
+This Plugin Version | [Retz Server](https://github.com/retz/retz/blob/master/doc/getting-started-server.rst) Version
+--- | ---
+0.0.x | 0.2.x (0.2.9+)
+0.1.x | 0.3.x
+0.2.x | 0.4.x
 
 ## Usage
 
