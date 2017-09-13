@@ -1,9 +1,13 @@
 version: 2
+
+defaults: &defaults
+  working_directory: ~/workspace
+  docker:
+    - image: circleci/openjdk:8
+
 jobs:
   build:
-    working_directory: ~/workspace
-    docker:
-      - image: circleci/openjdk:8
+    <<: *defaults
     steps:
       - checkout
       - restore_cache:
@@ -13,3 +17,30 @@ jobs:
            key: retz-{{ checksum "build.gradle" }}-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}
            paths:
              - "~/.gradle"
+      - persist_to_workspace:
+          root: ~/workspace
+          paths:
+            - .
+
+  deploy:
+    <<: *defaults
+    steps:
+      - attach_workspace:
+          at: ~/workspace
+      - restore_cache:
+          key: retz-{{ checksum "build.gradle" }}-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}
+      - deploy: ./gradlew -i publish
+
+workflows:
+  version: 2
+  build_and_deploy:
+    jobs:
+      - build
+      - deploy:
+          requires:
+            - build
+          filters:
+            branches:
+              only: master
+            tags:
+              only: /.*/
