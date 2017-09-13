@@ -1,5 +1,12 @@
 # Retz Digdag Plugin release notes
 
+## 0.2.0 (2017-09-13)
+
+* Bump the following version:
+  * Digdag : 0.9.16
+  * Retz Client : 0.4.0
+    * Attention: This version requires Retz Server 0.4.0+. See: https://github.com/retz/retz/releases/tag/0.4.0
+
 ## 0.1.0 (2017-08-18)
 
 * Bump the following version:
